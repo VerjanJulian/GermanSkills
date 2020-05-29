@@ -3,34 +3,40 @@ package com.detector.skills.activiy
 import android.arch.lifecycle.Observer
 import android.os.Bundle
 import android.support.v7.app.AppCompatActivity
+import android.util.Log
 import android.view.View.VISIBLE
 import com.detector.skills.R
-import com.detector.skills.classifier.Classifier
-import com.detector.skills.classifier.GRAPH_FILE_PATH
-import com.detector.skills.classifier.LABELS_FILE_PATH
-import com.detector.skills.classifier.TEXT_SIZE
+import com.detector.skills.classifier.*
 import com.detector.skills.classifier.tensorflow.WordsClassifierFactory
+import com.detector.skills.utils.assetFilePath
 import com.detector.skills.viewmodel.SkillsViewModel
-import com.ibm.cloud.sdk.core.security.IamAuthenticator
-import com.ibm.watson.natural_language_understanding.v1.NaturalLanguageUnderstanding
-import kotlinx.android.synthetic.main.activity_main.imageResult
-import kotlinx.android.synthetic.main.activity_main.writeHere
-import kotlinx.android.synthetic.main.activity_main.showDetail
+import kotlinx.android.synthetic.main.activity_main.*
 import org.koin.android.viewmodel.ext.android.viewModel
+import org.pytorch.IValue
+import org.pytorch.Module
+import java.util.*
 
 class MainActivity : AppCompatActivity() {
 
     private val model: SkillsViewModel by viewModel()
-    private lateinit var analyzer: NaturalLanguageUnderstanding
     private lateinit var classifier: Classifier
+    // loading serialized torchscript module from packaged into app android asset model.pt,
+    // app/src/model/assets/model.pt
+    private lateinit var module: Module
+    private lateinit var getClassesOutput: IValue
+    private val SCORES_FORMAT = "%.2f"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        createClassifier()
+        module = Module.load(assetFilePath( "model-reddit16-f140225004_2.pt1"))
         setModelViewObserver()
         setListener()
-        setNaturalLanguageUnderstanding()
+        setUpPytorchModule()
+    }
+
+    private fun setUpPytorchModule(){
+        getClassesOutput = module.runMethod("get_classes")
     }
 
     private fun createClassifier() {
@@ -45,53 +51,27 @@ class MainActivity : AppCompatActivity() {
     private fun setModelViewObserver() {
         model.getResults().observe(this, Observer { overallSentiment ->
             overallSentiment?.let {
-                val overallSentimentScore = it.confidence
-                imageResult.setImageDrawable(
-                    resources.getDrawable(
-                        R.drawable.ic_sentiment_satisfied_black_24dp,
-                        null
-                    )
-                )
-                if (overallSentimentScore < 0.0)
-                    imageResult.setImageDrawable(
-                        resources.getDrawable(
-                            R.drawable.ic_sentiment_very_dissatisfied_black_24dp,
-                            null
-                        )
-                    )
-                if (overallSentimentScore == 0.0)
-                    imageResult.setImageDrawable(
-                        resources.getDrawable(
-                            R.drawable.ic_sentiment_very_dissatisfied_black_24dp,
-                            null
-                        )
-                    )
-
                 imageResult.visibility = VISIBLE
+                applyUIAnalysisResult(it)
             }
         })
     }
 
-
-    private fun setNaturalLanguageUnderstanding() {
-        val authenticator = IamAuthenticator(
-            resources.getString(
-                R.string.natural_language_understanding_key
-            )
-        )
-        analyzer = NaturalLanguageUnderstanding(
-            "2019-07-12",
-            authenticator
-        )
-        analyzer.serviceUrl = resources.getString(
-            R.string.natural_language_understanding_url
-        )
+    private fun applyUIAnalysisResult(result: AnalysisResult) {
+        for (i in 0 until model.TOP_K) {
+            Log.e("ClassName..", result.topKClassNames[i])
+            Log.e("RESULT....",String.format(
+                Locale.US,
+                SCORES_FORMAT,
+                result.topKScores[i]
+            ))
+        }
+        imageResult.visibility = VISIBLE
     }
 
     private fun setListener() {
         showDetail.setOnClickListener {
-            model.analyzeText(writeHere.text.toString(), analyzer)
-            //model.analyzeTextLocally(writeHere.text.toString(), classifier) For the moment we don use that because the model is not trained well
+            model.analyzeText(writeHere.text.toString(), module, getClassesOutput)
         }
     }
 }

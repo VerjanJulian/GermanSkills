@@ -3,65 +3,64 @@ package com.detector.skills.viewmodel
 import android.arch.lifecycle.LiveData
 import android.arch.lifecycle.MutableLiveData
 import android.arch.lifecycle.ViewModel
-import com.detector.skills.classifier.Classifier
-import com.ibm.watson.natural_language_understanding.v1.NaturalLanguageUnderstanding
-import com.ibm.watson.natural_language_understanding.v1.model.*
-import com.detector.skills.classifier.Result
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.Dispatchers
+import com.detector.skills.classifier.AnalysisResult
+import com.detector.skills.utils.topK
+import kotlinx.coroutines.*
+import org.pytorch.IValue
+import org.pytorch.Module
+import org.pytorch.Tensor
+import java.nio.charset.Charset
 import kotlin.coroutines.CoroutineContext
 
 class SkillsViewModel() : ViewModel(), CoroutineScope {
 
     private var job = Job()
-    private val result = MutableLiveData<Result>()
+    private val result = MutableLiveData<AnalysisResult>()
+    private lateinit var moduleClasses: Array<String?>
+    val TOP_K = 3
 
-    fun getResults(): LiveData<Result> {
+    fun getResults(): LiveData<AnalysisResult> {
         return result
     }
 
     override val coroutineContext: CoroutineContext
         get() = job
 
-    private val entityOptions = EntitiesOptions.Builder()
-        .emotion(true)
-        .sentiment(true)
-        .build()
+    fun analyzeText(
+        text: String,
+        module: Module,
+        getClassesOutput: IValue
+    ) {
 
-    private val sentimentOptions = SentimentOptions.Builder()
-        .document(true)
-        .build()
-
-    private val features = Features.Builder()
-        .entities(entityOptions)
-        .sentiment(sentimentOptions)
-        .build()
-
-    fun analyzeText(text: String, analyzer: NaturalLanguageUnderstanding) {
-        val analyzerOptions = AnalyzeOptions.Builder()
-            .text(text)
-            .features(features)
-            .build()
-        launch {
-            suspend {
-                val response = analyzer.analyze(analyzerOptions).execute()
-                withContext(Dispatchers.Main) {
-                    val analyzeResult = Result(
-                        response.result.sentiment.document.label,
-                        response.result.sentiment.document.score
-                    )
-                    result.postValue(analyzeResult)
-                }
-            }.invoke()
+        val classesListIValue = getClassesOutput.toList()
+        val moduleClassesTemp =
+            arrayOfNulls<String>(classesListIValue.size)
+        var i = 0
+        for (iv in classesListIValue) {
+            moduleClassesTemp[i++] = iv.toStr()
         }
-    }
+        moduleClasses = moduleClassesTemp
 
-    fun analyzeTextLocally(text: String, classifier: Classifier) {
-        val analyzeResult = classifier.analyzeText(text)
-        result.postValue(analyzeResult)
+        val bytes = text.toByteArray(Charset.forName("UTF-8"))
+        val shape = longArrayOf(1, bytes.size.toLong())
+        val inputTensor = Tensor.fromBlobUnsigned(bytes, shape)
+        val outputTensor: Tensor = module.forward(IValue.from(inputTensor)).toTensor()
+        val scores = outputTensor.dataAsFloatArray
+        val ixs: IntArray =
+            topK(scores, TOP_K)
+        val topKClassNames =
+            arrayOfNulls<String>(TOP_K)
+        val topKScores =
+            FloatArray(TOP_K)
+        for (i in 0 until TOP_K) {
+            val ix = ixs[i]
+            topKClassNames[i] = moduleClasses[ix]
+            topKScores[i] = scores[ix]
+        }
+        result.postValue( AnalysisResult(
+            topKClassNames,
+            topKScores
+        ))
     }
 
     override fun onCleared() {
