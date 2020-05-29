@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">German Skills Detector</string>
+
+    <string name="natural_language_understanding_key">sLsjPybLUGtOtOAmG2g_JQ69GLYbvJ1DUCdfjb3aPkUU</string>
+    <string name="natural_language_understanding_url">https://api.eu-gb.natural-language-understanding.watson.cloud.ibm.com/instances/1b31b584-6055-4439-8b77-0337ab754629</string>
+</resources>
